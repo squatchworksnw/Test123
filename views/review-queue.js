@@ -20,16 +20,29 @@ function renderReviewQueue(){
 
 async function addSubmission(e){
   e.preventDefault();
+  const form = document.getElementById("submissionForm");
+  const submitButton = typeof form?.querySelector === "function" ? form.querySelector("button[type='submit']") : null;
+  const originalButtonText = submitButton?.textContent || "Submit Request";
+  let currentStep = "starting request";
   try{
     if(!requireInsertPermission("field_ops_import_reviews", "submit requests")) return;
+    if(submitButton){
+      submitButton.disabled = true;
+      submitButton.textContent = "Sending...";
+    }
     setInlineState("submissionSaveState", "Sending request...", "pending");
     const interactions = window.FieldOps.Services.interactions;
     const upload = document.getElementById("submissionUpload")?.files?.[0] || interactions?.droppedReviewFile;
     let documentId = null;
     if(upload){
+      currentStep = "uploading file";
+      setInlineState("submissionSaveState", "Uploading attached file...", "pending");
       documentId = id();
       const storagePath = await uploadDocumentToStorage(upload, documentId);
+      currentStep = "reading file preview";
       const extractedText = await extractFileText(upload);
+      currentStep = "saving document record";
+      setInlineState("submissionSaveState", "Saving attached file record...", "pending");
       await saveDocumentMetadata({
         docId: documentId,
         fileNameValue: upload.name,
@@ -40,14 +53,22 @@ async function addSubmission(e){
         notes: `Submitted with request: ${submissionDescription.value}`
       });
     }
+    currentStep = "saving review request";
+    setInlineState("submissionSaveState", "Saving request for review...", "pending");
     await createImportReview(submissionSource.value, "work_order", Mappers.submitterWorkOrderReviewData({ description:submissionDescription.value, urgency:submissionUrgency.value, location:submissionLocation.value, category:submissionCategory.value, name:submissionName.value, contact:submissionContact.value, documentId }), submissionDescription.value, documentId);
-    e.target.reset();
+    if(typeof form?.reset === "function") form.reset();
     interactions?.clearDroppedReviewFile?.();
-    setInlineState("submissionSaveState", upload ? "Request and file sent for review" : "Request sent for review", "saved");
-    await loadWorkspaceData();
+    setInlineState("submissionSaveState", "Saved - we'll take a look at it.", "saved");
+    setStatus("Saved - we'll take a look at it.");
+    loadWorkspaceData().catch(err => console.error("Submission saved, but refresh failed", err));
   }catch(err){
-    setInlineState("submissionSaveState", `Could not send: ${permissionAwareErrorMessage(err)}`, "failed");
+    setInlineState("submissionSaveState", `Could not send while ${currentStep}: ${permissionAwareErrorMessage(err)}`, "failed");
     handleWriteError(err);
+  }finally{
+    if(submitButton){
+      submitButton.disabled = false;
+      submitButton.textContent = canSubmitOnly() ? "Submit Request" : originalButtonText;
+    }
   }
 }
 
